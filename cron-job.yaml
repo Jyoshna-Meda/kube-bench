@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kube-bench
+spec:
+  schedule: "* * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          hostPID: true
+          nodeSelector:
+            kubernetes.io/hostname: sifyadm
+          initContainers:
+            - name: kube-bench
+              image: docker.io/aquasec/kube-bench:v0.11.2
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  kube-bench --json --outputfile=/results/bench_output.json
+              volumeMounts:
+                - mountPath: /etc/kubernetes
+                  name: etc-kubernetes
+                  readOnly: true
+                - mountPath: /var/lib/etcd
+                  name: var-lib-etcd
+                  readOnly: true
+                - mountPath: /var/lib/kubelet
+                  name: var-lib-kubelet
+                  readOnly: true
+                - mountPath: /usr/bin
+                  name: usr-bin
+                  readOnly: true
+                - mountPath: /etc/systemd
+                  name: etc-systemd
+                  readOnly: true
+                - mountPath: /lib/systemd
+                  name: lib-systemd
+                  readOnly: true
+                - mountPath: /results
+                  name: result-dir
+          containers:
+            - name: parser
+              image: python:3.11
+              command: ["sh", "-c"]
+              args:
+                - |
+                  pip install requests && \
+                  python /scripts/push-metrics.py
+              volumeMounts:
+                - mountPath: /results
+                  name: result-dir
+                - mountPath: /scripts
+                  name: script-vol
+          volumes:
+            - name: etc-kubernetes
+              hostPath:
+                path: /etc/kubernetes
+            - name: var-lib-etcd
+              hostPath:
+                path: /var/lib/etcd
+            - name: var-lib-kubelet
+              hostPath:
+                path: /var/lib/kubelet
+            - name: usr-bin
+              hostPath:
+                path: /usr/bin
+            - name: etc-systemd
+              hostPath:
+                path: /etc/systemd
+            - name: lib-systemd
+              hostPath:
+                path: /lib/systemd
+            - name: result-dir
+              emptyDir: {}
+            - name: script-vol
+              configMap:
+                name: kube-bench-parser
+
