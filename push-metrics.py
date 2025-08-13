@@ -1,36 +1,40 @@
 import json
-import requests
 import os
+from datetime import datetime
 
-# Pushgateway settings
-PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL", "http://pushgateway-prometheus-pushgateway.monitoring.svc.cluster.local:9091")
-JOB_NAME = "kube_bench_detailed"
+RESULTS_FILE = "/results/bench_output.json"
+TEXTFILE_COLLECTOR_DIR = "/var/lib/node_exporter/textfile_collector"
+OUTPUT_FILE = os.path.join(TEXTFILE_COLLECTOR_DIR, "kube_bench.prom")
 
-# Load kube-bench output
-with open("/results/bench_output.json") as f:
+def sanitize_label_value(value):
+    # Replace newlines with space, double quotes with single quotes, escape backslashes
+    value = value.replace('\n', ' ').replace('"', "'").replace('\\', '\\\\')
+    return value
+
+with open(RESULTS_FILE) as f:
     data = json.load(f)
 
 metrics = []
-
 controls = data.get("Controls", [])
+
 for control in controls:
     for test_group in control.get("tests", []):
         for result in test_group.get("results", []):
             test_id = result.get("test_number", "unknown")
             status = result.get("status", "unknown")
-            desc = result.get("test_desc", "no_description").replace('"', "'").replace("\n", " ")[:100]
-            
-            # Prometheus metric line
-            metric = f'kube_bench_check{{test_id="{test_id}", status="{status}", desc="{desc}"}} 1'
-            metrics.append(metric)
+            desc = sanitize_label_value(result.get("test_desc", "no_description"))
+            remediation = sanitize_label_value(result.get("remediation", "no_remediation"))
+            value = 1 if status.lower() == "pass" else 0
 
-# Push all metrics
-payload = '\n'.join(metrics) + '\n'
-res = requests.post(
-    f"{PUSHGATEWAY_URL}/metrics/job/{JOB_NAME}",
-    data=payload,
-    headers={"Content-Type": "text/plain"}
-)
+            metrics.append(
+                f'kube_bench_check{{test_id="{test_id}", status="{status}", desc="{desc}", remediation="{remediation}"}} {value}'
+            )
 
-print("Metrics pushed:", res.status_code)
+metrics.append(f'# Generated at {datetime.utcnow().isoformat()}Z')
 
+os.makedirs(TEXTFILE_COLLECTOR_DIR, exist_ok=True)
+
+with open(OUTPUT_FILE, "w") as f:
+    f.write("\n".join(metrics) + "\n")
+
+print(f"Metrics written to {OUTPUT_FILE}")
